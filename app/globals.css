@@ -1,0 +1,89 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #0f0f17;
+  --surface: #17172a;
+  --surface2: #1e1e35;
+  --border: rgba(255,255,255,0.08);
+  --border2: rgba(255,255,255,0.15);
+  --text: #e8e8f0;
+  --text2: #9898b8;
+  --text3: #6060808;
+  --purple: #7C3AED;
+  --purple-light: #a78bfa;
+  --green: #22C55E;
+  --red: #EF4444;
+  --amber: #F59E0B;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Pretendard', 'Noto Sans KR', -apple-system, sans-serif;
+  min-height: 100vh;
+}
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--surface2); border-radius: 3px; }
+
+input, select, textarea {
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 14px;
+  outline: none;
+  width: 100%;
+}
+input:focus, select:focus { border-color: var(--purple); }
+input::placeholder { color: var(--text2); }
+
+button { cursor: pointer; font-family: inherit; }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.badge-ace { background: rgba(124,58,237,0.2); color: #a78bfa; }
+.badge-value { background: rgba(3,105,161,0.2); color: #38bdf8; }
+.badge-normal { background: rgba(255,255,255,0.06); color: var(--text2); }
+
+.btn {
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  border: 1px solid var(--border2);
+  background: var(--surface2);
+  color: var(--text);
+  transition: all 0.15s;
+}
+.btn:hover { border-color: var(--purple); color: var(--purple-light); }
+.btn-primary {
+  background: var(--purple);
+  border-color: var(--purple);
+  color: #fff;
+}
+.btn-primary:hover { background: #6D28D9; }
+.btn-danger { background: rgba(239,68,68,0.15); border-color: rgba(239,68,68,0.3); color: var(--red); }
+.btn-danger:hover { background: rgba(239,68,68,0.25); }
+
+.wr-high { color: var(--green); }
+.wr-mid { color: var(--text); }
+.wr-low { color: var(--red); }
