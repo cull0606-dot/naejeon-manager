@@ -10,6 +10,7 @@ interface Ctx {
   addPlayer: (p: Omit<Player, "id">) => Promise<void>;
   updatePlayer: (id: number, p: Partial<Player>) => Promise<void>;
   deletePlayer: (id: number) => Promise<void>;
+  updateTeam: (id: number, t: Partial<Team>) => Promise<void>;
   assignPlayerToTeam: (playerId: number, teamId: number, price: number) => Promise<void>;
   removePlayerFromTeam: (playerId: number) => Promise<void>;
   resetAuction: () => Promise<void>;
@@ -34,13 +35,11 @@ export function PlayersProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     fetchAll();
-
-    const pc = supabase.channel("players-channel")
+    const channel = supabase.channel("global-changes")
       .on("postgres_changes", { event: "*", schema: "public", table: "players" }, () => fetchAll())
       .on("postgres_changes", { event: "*", schema: "public", table: "teams" }, () => fetchAll())
       .subscribe();
-
-    return () => { supabase.removeChannel(pc); };
+    return () => { supabase.removeChannel(channel); };
   }, []);
 
   const addPlayer = useCallback(async (p: Omit<Player, "id">) => {
@@ -67,6 +66,14 @@ export function PlayersProvider({ children }: { children: ReactNode }) {
     await supabase.from("players").delete().eq("id", id);
   }, []);
 
+  const updateTeam = useCallback(async (id: number, t: Partial<Team>) => {
+    const db: Record<string, unknown> = {};
+    if (t.name !== undefined) db.name = t.name;
+    if (t.color !== undefined) db.color = t.color;
+    if (t.points !== undefined) db.points = t.points;
+    await supabase.from("teams").update(db).eq("id", id);
+  }, []);
+
   const assignPlayerToTeam = useCallback(async (playerId: number, teamId: number, price: number) => {
     const team = teams.find(t => t.id === teamId);
     if (!team) return;
@@ -85,11 +92,13 @@ export function PlayersProvider({ children }: { children: ReactNode }) {
 
   const resetAuction = useCallback(async () => {
     await supabase.from("players").update({ team_id: null, auction_price: null }).neq("id", 0);
-    await supabase.from("teams").update({ points: 1000 }).neq("id", 0);
-  }, []);
+    for (const team of teams) {
+      await supabase.from("teams").update({ points: 1000 }).eq("id", team.id);
+    }
+  }, [teams]);
 
   return (
-    <Context.Provider value={{ players, teams, loading, addPlayer, updatePlayer, deletePlayer, assignPlayerToTeam, removePlayerFromTeam, resetAuction }}>
+    <Context.Provider value={{ players, teams, loading, addPlayer, updatePlayer, deletePlayer, updateTeam, assignPlayerToTeam, removePlayerFromTeam, resetAuction }}>
       {children}
     </Context.Provider>
   );
