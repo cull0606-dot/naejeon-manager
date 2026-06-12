@@ -1,6 +1,5 @@
 export type Grade = "ACE" | "VALUE" | "NORMAL";
 export type Lane = "TOP" | "JUG" | "MID" | "ADC" | "SUP";
-
 export interface LaneStat { tier: string; wr: number; lp?: number; }
 export interface Champion { name: string; games: number; wr: number; }
 export interface Player {
@@ -29,7 +28,6 @@ export interface Player {
   team_losses?: number;
   lp?: Record<Lane, number>;
 }
-
 export interface Team {
   id: number;
   name: string;
@@ -38,10 +36,29 @@ export interface Team {
   points: number;
   players: number[];
 }
-
 export const LANES: Lane[] = ["TOP", "JUG", "MID", "ADC", "SUP"];
-export const TIERS = ["C1","C2","C3","D1","D2","D3","D4","E1","E2","E3","E4","P1","P2","P3","P4","G1","G2","G3","G4","S1","S2","S3","S4"];
-
+export const TIERS = [
+  "m1050","m900","m750","m600","m450","m400","m350","m300","m250","m200","m150","m100","m0",
+  "D1","D2","D3","D4",
+  "E1","E2","E3","E4",
+  "P1","P2","P3","P4",
+  "G1","G2","G3","G4",
+  "S1","S2","S3","S4",
+  "B1","B2","B3","B4",
+  "I1","I2","I3","I4",
+  "unrank"
+];
+export const TIER_ORDER = [
+  "m1050","m900","m750","m600","m450","m400","m350","m300","m250","m200","m150","m100","m0",
+  "D1","D2","D3","D4",
+  "E1","E2","E3","E4",
+  "P1","P2","P3","P4",
+  "G1","G2","G3","G4",
+  "S1","S2","S3","S4",
+  "B1","B2","B3","B4",
+  "I1","I2","I3","I4",
+  "unrank"
+];
 export const INITIAL_TEAMS: Team[] = [
   { id:1, name:"A팀", color:"#7C3AED", captainId:1, points:1000, players:[] },
   { id:2, name:"B팀", color:"#0369A1", captainId:2, points:1000, players:[] },
