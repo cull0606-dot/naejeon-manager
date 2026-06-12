@@ -276,7 +276,18 @@ export default function MatchPage() {
                     <span style={{ color: "#DC2626" }}>{state.match2_winner}</span>
                   </div>
                   <button className="btn btn-primary" style={{ marginTop: 12 }}
-                    onClick={() => supabase.from("match_state").update({ stage: "final" }).eq("id", 1)}>
+                    onClick={async () => {
+                      const t1lineup = state.match1_winner === state.match1_team1_name ? state.match1_team1 : state.match1_team2;
+                      const t2lineup = state.match2_winner === state.match2_team1_name ? state.match2_team1 : state.match2_team2;
+                      await supabase.from("match_state").update({
+                        stage: "final",
+                        final_team1: t1lineup,
+                        final_team2: t2lineup,
+                        final_team1_name: state.match1_winner,
+                        final_team2_name: state.match2_winner,
+                        final_winner: null,
+                      }).eq("id", 1);
+                    }}>
                     결승 시작하기 →
                   </button>
                 </div>

@@ -20,6 +20,24 @@ function WrBar({ wr }: { wr: number }) {
 function PlayerModal({ player, onClose }: { player?: Player; onClose: () => void }) {
   const { addPlayer, updatePlayer } = useStore();
   const [saving, setSaving] = useState(false);
+
+  // 라인별 티어/승률 초기값
+  const initLanes = () => {
+    const result: Record<Lane, { tier: string; wr: number }> = {
+      TOP: { tier: "E4", wr: 50 },
+      JUG: { tier: "E4", wr: 50 },
+      MID: { tier: "E4", wr: 50 },
+      ADC: { tier: "E4", wr: 50 },
+      SUP: { tier: "E4", wr: 50 },
+    };
+    if (player?.lanes) {
+      LANES.forEach(l => {
+        result[l] = { tier: player.lanes[l]?.tier ?? "E4", wr: player.lanes[l]?.wr ?? 50 };
+      });
+    }
+    return result;
+  };
+
   const [form, setForm] = useState({
     name: player?.name ?? "",
     riot: player?.riot ?? "",
@@ -34,17 +52,29 @@ function PlayerModal({ player, onClose }: { player?: Player; onClose: () => void
     position_status: player?.position_status ?? "캐리형",
   });
 
+  const [laneForms, setLaneForms] = useState<Record<Lane, { tier: string; wr: number }>>(initLanes());
+
+  function setLane(lane: Lane, key: "tier" | "wr", value: string | number) {
+    setLaneForms(prev => ({ ...prev, [lane]: { ...prev[lane], [key]: key === "wr" ? Number(value) : value } }));
+  }
+
   async function save() {
     if (!form.name.trim()) { alert("닉네임을 입력하세요"); return; }
     setSaving(true);
-    const lanes = player?.lanes ?? {} as Player["lanes"];
+
+    const lanes: Player["lanes"] = {} as Player["lanes"];
+    LANES.forEach(l => {
+      lanes[l] = { tier: laneForms[l].tier, wr: laneForms[l].wr, lp: player?.lanes?.[l]?.lp ?? 0 };
+    });
+
+    // 주 라인 티어/승률을 대표값으로 사용
+    const mainTier = laneForms[form.line].tier;
+    const mainWr = laneForms[form.line].wr;
+
     if (!player) {
-      LANES.forEach(l => { if (!lanes[l]) lanes[l] = { tier: "E4", wr: 50, lp: 0 }; });
-      lanes[form.line] = { tier: form.tier, wr: form.wr, lp: 0 };
-      await addPlayer({ ...form, lanes, lp: { TOP:0,JUG:0,MID:0,ADC:0,SUP:0 }, champions: [], recent_results: [], wins:0, losses:0, team_wins:0, team_losses:0 });
+      await addPlayer({ ...form, tier: mainTier, wr: mainWr, lanes, lp: { TOP:0,JUG:0,MID:0,ADC:0,SUP:0 }, champions: [], recent_results: [], wins:0, losses:0, team_wins:0, team_losses:0 });
     } else {
-      const updated = { ...player.lanes, [form.line]: { ...player.lanes[form.line], tier: form.tier, wr: form.wr } };
-      await updatePlayer(player.id, { ...form, lanes: updated });
+      await updatePlayer(player.id, { ...form, tier: mainTier, wr: mainWr, lanes });
     }
     setSaving(false);
     onClose();
@@ -55,15 +85,19 @@ function PlayerModal({ player, onClose }: { player?: Player; onClose: () => void
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999, padding: 20 }}>
-      <div className="card" style={{ padding: 24, width: 400, maxHeight: "90vh", overflowY: "auto" }}>
+      <div className="card" style={{ padding: 24, width: 480, maxHeight: "90vh", overflowY: "auto" }}>
         <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 20 }}>{player ? "선수 수정" : "선수 추가"}</h3>
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+
+          {/* 닉네임 / 라이엇 ID */}
           {[["닉네임","name","text","원형"],["라이엇 아이디","riot","text","원형#KR1"]].map(([label,key,type,ph]) => (
             <div key={key}>
               <label style={{ fontSize: 12, color: "var(--text2)", display: "block", marginBottom: 4 }}>{label}</label>
               <input type={type} placeholder={ph} value={form[key as keyof typeof form] as string} onChange={F(key as keyof typeof form)} />
             </div>
           ))}
+
+          {/* 주/부 라인 */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             {[["주 라인","line"],["부 라인","sub"]].map(([label,key]) => (
               <div key={key}>
@@ -74,16 +108,44 @@ function PlayerModal({ player, onClose }: { player?: Player; onClose: () => void
               </div>
             ))}
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <div>
-              <label style={{ fontSize: 12, color: "var(--text2)", display: "block", marginBottom: 4 }}>티어</label>
-              <select value={form.tier} onChange={F("tier")}>{TIERS.map(t => <option key={t}>{t}</option>)}</select>
-            </div>
-            <div>
-              <label style={{ fontSize: 12, color: "var(--text2)", display: "block", marginBottom: 4 }}>승률 (%)</label>
-              <input type="number" min={0} max={100} value={form.wr} onChange={F("wr")} />
+
+          {/* 라인별 티어/승률 */}
+          <div>
+            <label style={{ fontSize: 12, color: "var(--text2)", display: "block", marginBottom: 8 }}>
+              라인별 티어 / 승률 <span style={{ fontSize: 11, color: "var(--purple-light)" }}>(주 라인 기준으로 대표값 자동 설정)</span>
+            </label>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {LANES.map(lane => {
+                const isMain = lane === form.line;
+                const isSub = lane === form.sub;
+                return (
+                  <div key={lane} style={{
+                    display: "grid", gridTemplateColumns: "52px 1fr 80px", gap: 8, alignItems: "center",
+                    padding: "8px 10px", borderRadius: 8,
+                    background: isMain ? "rgba(124,58,237,0.15)" : isSub ? "rgba(3,105,161,0.1)" : "var(--surface2)",
+                    border: `1px solid ${isMain ? "rgba(124,58,237,0.4)" : isSub ? "rgba(3,105,161,0.3)" : "transparent"}`,
+                  }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: isMain ? "var(--purple-light)" : isSub ? "#38bdf8" : "var(--text2)" }}>
+                      {lane}{isMain ? " 주" : isSub ? " 부" : ""}
+                    </div>
+                    <select value={laneForms[lane].tier} onChange={e => setLane(lane, "tier", e.target.value)} style={{ fontSize: 12 }}>
+                      {TIERS.map(t => <option key={t}>{t}</option>)}
+                    </select>
+                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                      <input
+                        type="number" min={0} max={100} value={laneForms[lane].wr}
+                        onChange={e => setLane(lane, "wr", e.target.value)}
+                        style={{ width: "100%", fontSize: 12 }}
+                      />
+                      <span style={{ fontSize: 11, color: "var(--text2)" }}>%</span>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
+
+          {/* 등급 / 포지션 성향 */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             <div>
               <label style={{ fontSize: 12, color: "var(--text2)", display: "block", marginBottom: 4 }}>등급</label>
@@ -96,19 +158,26 @@ function PlayerModal({ player, onClose }: { player?: Player; onClose: () => void
               </select>
             </div>
           </div>
+
+          {/* 태그 */}
           <div>
             <label style={{ fontSize: 12, color: "var(--text2)", display: "block", marginBottom: 4 }}>태그 (쉼표로 구분)</label>
             <input value={form.tags} onChange={F("tags")} placeholder="피지컬, 라인전" />
           </div>
+
+          {/* 소개 */}
           <div>
             <label style={{ fontSize: 12, color: "var(--text2)", display: "block", marginBottom: 4 }}>소개 및 특이사항</label>
             <textarea value={form.intro} onChange={F("intro")} placeholder="피지컬이 좋고 라인전 단계에서의 압박이 강합니다." style={{ width:"100%", minHeight:60, resize:"vertical" }} />
           </div>
+
+          {/* 활성 상태 */}
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <input type="checkbox" id="active" checked={form.active} onChange={e => setForm(prev => ({ ...prev, active: e.target.checked }))} style={{ width: "auto" }} />
             <label htmlFor="active" style={{ fontSize: 13, color: "var(--text)" }}>활성 상태</label>
           </div>
         </div>
+
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 20 }}>
           <button className="btn" onClick={onClose}>취소</button>
           <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? "저장 중..." : player ? "저장" : "추가"}</button>
