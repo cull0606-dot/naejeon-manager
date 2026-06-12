@@ -26,7 +26,7 @@ export default function MatchPage() {
   const [recording, setRecording] = useState(false);
   const [history, setHistory] = useState<{ winner: string; loser: string; time: string }[]>([]);
 
-  // 실시간 동기화
+  // 실시간 동기화 (구독 + 1초 폴링 백업)
   useEffect(() => {
     fetchMatchState();
     const channel = supabase.channel("match-rt")
@@ -38,7 +38,9 @@ export default function MatchPage() {
         if (d.team2_name) setTeam2Name(d.team2_name);
       })
       .subscribe();
-    return () => { supabase.removeChannel(channel); };
+
+    const interval = setInterval(fetchMatchState, 1000);
+    return () => { supabase.removeChannel(channel); clearInterval(interval); };
   }, []);
 
   async function fetchMatchState() {

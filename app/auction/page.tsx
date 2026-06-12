@@ -11,12 +11,14 @@ interface AuctionState {
   active: boolean;
   current_player_id: number | null;
   current_price: number;
-  time_left: number;
+  end_time: string | null; // ISO timestamp - 경매 종료 예정 시각
   bid_team_id: number | null;
   bid_team_name: string | null;
   round: number;
 }
 interface BidLog { teamName: string; teamColor: string; price: number; time: string; }
+
+const DURATION = 30; // 초
 
 export default function AuctionPage() {
   const { players, teams, assignPlayerToTeam, resetAuction, updateTeam, loading } = useStore();
@@ -26,14 +28,13 @@ export default function AuctionPage() {
   const [bidPrice, setBidPrice] = useState(50);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [startPoints, setStartPoints] = useState<Record<number, number>>({});
-  const [isHost, setIsHost] = useState(false);
-  const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [timeLeft, setTimeLeft] = useState(DURATION);
+  const processingEndRef = useRef(false);
 
   const available = players.filter(p => p.active && !p.teamId);
   const current = players.find(p => p.id === auctionState?.current_player_id);
-  const timeLeft = auctionState?.time_left ?? 30;
   const timerColor = timeLeft <= 5 ? "#EF4444" : timeLeft <= 10 ? "#F59E0B" : "#a78bfa";
-  const timerPct = (timeLeft / 30) * 100;
+  const timerPct = (timeLeft / DURATION) * 100;
 
   useEffect(() => {
     if (teams.length > 0 && !bidTeamId) {
@@ -49,6 +50,7 @@ export default function AuctionPage() {
     if (data) setAuctionState(data as AuctionState);
   }
 
+  // 실시간 동기화 (구독 + 1초 폴링 백업)
   useEffect(() => {
     fetchAuctionState();
     const channel = supabase.channel("auction-rt")
@@ -65,49 +67,64 @@ export default function AuctionPage() {
         }
       })
       .subscribe();
-    return () => { supabase.removeChannel(channel); };
+
+    const interval = setInterval(fetchAuctionState, 1000);
+    return () => { supabase.removeChannel(channel); clearInterval(interval); };
   }, [teams]);
 
-  // 호스트만 타이머 카운트다운 실행
+  // 매초 — end_time 기준으로 모든 클라이언트가 동일하게 카운트다운 계산
   useEffect(() => {
-    if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-    if (!isHost || !auctionState?.active) return;
-    timerIntervalRef.current = setInterval(async () => {
-      const { data } = await supabase.from("auction_state").select("time_left,active,bid_team_id,current_player_id,current_price").eq("id",1).single();
-      if (!data || !data.active) { clearInterval(timerIntervalRef.current!); return; }
-      if (data.time_left <= 1) {
-        clearInterval(timerIntervalRef.current!);
-        // 시간 종료 → 자동 낙찰
-        if (data.bid_team_id && data.current_player_id) {
-          await assignPlayerToTeam(data.current_player_id, data.bid_team_id, data.current_price);
-        }
-        const next = players.filter(p => p.active && !p.teamId && p.id !== data.current_player_id)[0];
-        await supabase.from("auction_state").update({ active: false, current_player_id: next?.id ?? null, current_price: 0, time_left: 30, bid_team_id: null, bid_team_name: null }).eq("id",1);
-      } else {
-        await supabase.from("auction_state").update({ time_left: data.time_left - 1 }).eq("id",1);
+    const tick = setInterval(() => {
+      if (!auctionState?.active || !auctionState.end_time) {
+        setTimeLeft(DURATION);
+        return;
       }
-    }, 1000);
-    return () => { if (timerIntervalRef.current) clearInterval(timerIntervalRef.current); };
-  }, [isHost, auctionState?.active]);
+      const remain = Math.ceil((new Date(auctionState.end_time).getTime() - Date.now()) / 1000);
+      setTimeLeft(Math.max(0, Math.min(DURATION, remain)));
+
+      // 시간이 다 되면 (아무 클라이언트나) 자동 낙찰 처리 — 중복 방지용 플래그
+      if (remain <= 0 && !processingEndRef.current) {
+        processingEndRef.current = true;
+        handleTimeUp().finally(() => { processingEndRef.current = false; });
+      }
+    }, 250);
+    return () => clearInterval(tick);
+  }, [auctionState]);
+
+  async function handleTimeUp() {
+    // 다시 한번 DB에서 최신 상태 확인 (중복 처리 방지)
+    const { data } = await supabase.from("auction_state").select("*").eq("id",1).single();
+    if (!data || !data.active || !data.end_time) return;
+    const remain = (new Date(data.end_time).getTime() - Date.now()) / 1000;
+    if (remain > 0.5) return; // 아직 안 끝남
+
+    if (data.bid_team_id && data.current_player_id) {
+      await assignPlayerToTeam(data.current_player_id, data.bid_team_id, data.current_price);
+    }
+    const next = players.filter(p => p.active && !p.teamId && p.id !== data.current_player_id)[0];
+    await supabase.from("auction_state").update({ active: false, current_player_id: next?.id ?? null, current_price: 0, end_time: null, bid_team_id: null, bid_team_name: null }).eq("id",1);
+  }
 
   async function selectPlayer(p: Player) {
-    await supabase.from("auction_state").update({ active: false, current_player_id: p.id, current_price: 0, time_left: 30, bid_team_id: null, bid_team_name: null }).eq("id",1);
+    await supabase.from("auction_state").update({ active: false, current_player_id: p.id, current_price: 0, end_time: null, bid_team_id: null, bid_team_name: null }).eq("id",1);
+  }
+
+  function newEndTime() {
+    return new Date(Date.now() + DURATION * 1000).toISOString();
   }
 
   async function startAuction() {
     if (!auctionState?.current_player_id) {
       const first = available[0];
       if (!first) return;
-      await supabase.from("auction_state").update({ active: true, current_player_id: first.id, current_price: 0, time_left: 30, bid_team_id: null, bid_team_name: null }).eq("id",1);
+      await supabase.from("auction_state").update({ active: true, current_player_id: first.id, current_price: 0, end_time: newEndTime(), bid_team_id: null, bid_team_name: null }).eq("id",1);
     } else {
-      await supabase.from("auction_state").update({ active: true, time_left: 30 }).eq("id",1);
+      await supabase.from("auction_state").update({ active: true, end_time: newEndTime() }).eq("id",1);
     }
-    setIsHost(true);
   }
 
   async function pauseAuction() {
     await supabase.from("auction_state").update({ active: false }).eq("id",1);
-    setIsHost(false);
   }
 
   async function placeBid() {
@@ -115,43 +132,39 @@ export default function AuctionPage() {
     if (!team || !auctionState?.current_player_id) return;
     if (bidPrice <= (auctionState.current_price ?? 0)) { alert("현재 입찰가보다 높아야 합니다!"); return; }
     if (bidPrice > team.points) { alert(`${team.name} 포인트가 부족합니다! (보유: ${team.points}P)`); return; }
-    await supabase.from("auction_state").update({ current_price: bidPrice, bid_team_id: team.id, bid_team_name: team.name, time_left: 30 }).eq("id",1);
+    await supabase.from("auction_state").update({ current_price: bidPrice, bid_team_id: team.id, bid_team_name: team.name, end_time: newEndTime(), active: true }).eq("id",1);
   }
 
   async function confirmBid() {
     if (!auctionState?.bid_team_id || !auctionState?.current_player_id) return;
-    if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
     await assignPlayerToTeam(auctionState.current_player_id, auctionState.bid_team_id, auctionState.current_price);
     const next = available.filter(p => p.id !== auctionState.current_player_id)[0];
-    await supabase.from("auction_state").update({ active: false, current_player_id: next?.id ?? null, current_price: 0, time_left: 30, bid_team_id: null, bid_team_name: null }).eq("id",1);
+    await supabase.from("auction_state").update({ active: false, current_player_id: next?.id ?? null, current_price: 0, end_time: null, bid_team_id: null, bid_team_name: null }).eq("id",1);
   }
 
   async function skipPlayer() {
-    if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
     const next = available.filter(p => p.id !== auctionState?.current_player_id)[0];
-    await supabase.from("auction_state").update({ active: false, current_player_id: next?.id ?? null, current_price: 0, time_left: 30, bid_team_id: null, bid_team_name: null }).eq("id",1);
+    await supabase.from("auction_state").update({ active: false, current_player_id: next?.id ?? null, current_price: 0, end_time: null, bid_team_id: null, bid_team_name: null }).eq("id",1);
   }
 
   async function monopolyBid() {
     const team = teams.find(t => t.id === bidTeamId);
     if (!team) return;
     if (team.points < 100) { alert("포인트가 너무 부족합니다!"); return; }
-    await supabase.from("auction_state").update({ current_price: team.points, bid_team_id: team.id, bid_team_name: team.name, time_left: 30 }).eq("id",1);
+    await supabase.from("auction_state").update({ current_price: team.points, bid_team_id: team.id, bid_team_name: team.name, end_time: newEndTime(), active: true }).eq("id",1);
   }
 
   async function allIn() {
     const team = teams.find(t => t.id === bidTeamId);
     if (!team) return;
     setBidPrice(team.points);
-    await supabase.from("auction_state").update({ current_price: team.points, bid_team_id: team.id, bid_team_name: team.name, time_left: 30 }).eq("id",1);
+    await supabase.from("auction_state").update({ current_price: team.points, bid_team_id: team.id, bid_team_name: team.name, end_time: newEndTime(), active: true }).eq("id",1);
   }
 
   async function handleReset() {
     if (!confirm("경매를 초기화할까요? 모든 배정이 취소됩니다.")) return;
-    if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-    setIsHost(false);
     await resetAuction();
-    await supabase.from("auction_state").update({ active: false, current_player_id: null, current_price: 0, time_left: 30, bid_team_id: null, bid_team_name: null, round: 1 }).eq("id",1);
+    await supabase.from("auction_state").update({ active: false, current_player_id: null, current_price: 0, end_time: null, bid_team_id: null, bid_team_name: null, round: 1 }).eq("id",1);
     setLog([]);
   }
 
@@ -204,7 +217,6 @@ export default function AuctionPage() {
           <p style={{ fontSize:13, color:"var(--text2)", marginTop:2 }}>
             남은 선수 {available.length}명 · 배정 완료 {players.filter(p=>p.teamId).length}명 ·{" "}
             <span style={{ color:"#22C55E" }}>● 실시간 연동</span>
-            {isHost && <span style={{ color:"#F59E0B", marginLeft:8 }}>👑 호스트</span>}
           </p>
         </div>
         <div style={{ display:"flex", gap:8 }}>
@@ -220,7 +232,6 @@ export default function AuctionPage() {
         <div className="card" style={{ padding:0, overflow:"hidden", position:"relative" }}>
           {current ? (
             <>
-              {/* 배경 그라데이션 */}
               <div style={{ background:`linear-gradient(135deg, ${avatarColor(current.id)}33, #0f0f17)`, padding:"24px 20px 16px", textAlign:"center" }}>
                 <div style={{ width:80, height:80, borderRadius:16, background:`${avatarColor(current.id)}33`, border:`2px solid ${avatarColor(current.id)}66`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:32, fontWeight:700, color:avatarColor(current.id), margin:"0 auto 12px" }}>
                   {current.name.slice(0,2)}
@@ -269,7 +280,6 @@ export default function AuctionPage() {
 
         {/* 가운데: 경매 컨트롤 */}
         <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-          {/* 현재가 & 타이머 */}
           <div className="card" style={{ padding:24 }}>
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:20 }}>
               <div style={{ textAlign:"center" }}>
@@ -292,7 +302,7 @@ export default function AuctionPage() {
                 <span style={{ fontSize:36, fontWeight:900, color:timerColor, fontVariantNumeric:"tabular-nums" }}>{String(timeLeft).padStart(2,"0")}초</span>
               </div>
               <div style={{ height:8, background:"var(--surface2)", borderRadius:99, overflow:"hidden" }}>
-                <div style={{ width:`${timerPct}%`, height:"100%", background:timerColor, borderRadius:99, transition:"width 0.9s linear" }} />
+                <div style={{ width:`${timerPct}%`, height:"100%", background:timerColor, borderRadius:99, transition:"width 0.25s linear" }} />
               </div>
             </div>
 
@@ -323,7 +333,7 @@ export default function AuctionPage() {
                 ? <button className="btn btn-primary" style={{ flex:2, padding:"10px 0", fontSize:14, fontWeight:700 }} onClick={startAuction} disabled={!current}>▶ 경매 시작</button>
                 : <button className="btn" style={{ flex:2, padding:"10px 0" }} onClick={pauseAuction}>⏸ 일시정지</button>
               }
-              <button className="btn btn-primary" style={{ flex:2, padding:"10px 0", fontSize:14, fontWeight:700 }} onClick={placeBid} disabled={!auctionState.active || !current}>
+              <button className="btn btn-primary" style={{ flex:2, padding:"10px 0", fontSize:14, fontWeight:700 }} onClick={placeBid} disabled={!current}>
                 🏷️ 입찰하기
               </button>
             </div>
@@ -349,7 +359,6 @@ export default function AuctionPage() {
             <span style={{ fontSize:11, color:"#22C55E" }}>● 실시간</span>
           </div>
 
-          {/* 팀별 포인트 */}
           <div style={{ display:"flex", flexDirection:"column", gap:6, marginBottom:14 }}>
             {teams.map(t => (
               <div key={t.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 10px", borderRadius:8, background: auctionState.bid_team_name===t.name ? `${t.color}22` : "var(--surface2)", border:`1px solid ${auctionState.bid_team_name===t.name ? t.color+"66" : "transparent"}` }}>
@@ -408,7 +417,6 @@ export default function AuctionPage() {
           )}
         </div>
 
-        {/* 배정 완료된 선수 */}
         {players.filter(p=>p.teamId).length > 0 && (
           <div style={{ marginTop:16, paddingTop:16, borderTop:"1px solid var(--border)" }}>
             <div style={{ fontSize:12, color:"var(--text2)", marginBottom:8 }}>배정 완료</div>

@@ -41,7 +41,9 @@ export function PlayersProvider({ children }: { children: ReactNode }) {
       .on("postgres_changes", { event: "*", schema: "public", table: "players" }, () => fetchAll())
       .on("postgres_changes", { event: "*", schema: "public", table: "teams" }, () => fetchAll())
       .subscribe();
-    return () => { supabase.removeChannel(channel); };
+
+    const interval = setInterval(fetchAll, 1000);
+    return () => { supabase.removeChannel(channel); clearInterval(interval); };
   }, []);
 
   const addPlayer = useCallback(async (p: Omit<Player, "id">) => {
