@@ -95,8 +95,14 @@ export function PlayersProvider({ children }: { children: ReactNode }) {
       for (const lane of LANES) {
         const id = lineup[lane];
         if (!id) continue;
-        const p = players.find(x => x.id === id);
-        if (!p) continue;
+
+        // 최신 데이터를 DB에서 직접 가져옴 (stale state 방지)
+        const { data: fresh, error: fetchErr } = await supabase.from("players").select("*").eq("id", id).single();
+        if (fetchErr || !fresh) {
+          console.error("선수 정보 조회 실패", id, fetchErr);
+          continue;
+        }
+        const p = dbToPlayer(fresh);
 
         // 전체 전적
         const newWins = (p.wins ?? 0) + (didWin ? 1 : 0);
@@ -106,26 +112,34 @@ export function PlayersProvider({ children }: { children: ReactNode }) {
         const newWr = total > 0 ? Math.round((newWins / total) * 100) : p.wr;
 
         // 라인별 전적 (실제 출전한 라인 기준)
-        const currentLaneStat = p.lanes?.[lane] ?? { tier: "E4", wr: 50 };
+        const currentLanes: Player["lanes"] = p.lanes ?? Object.fromEntries(LANES.map(l => [l, { tier: "E4", wr: 50 }])) as Player["lanes"];
+        const currentLaneStat = currentLanes[lane] ?? { tier: "E4", wr: 50 };
         const laneWins = (currentLaneStat.wins ?? 0) + (didWin ? 1 : 0);
         const laneLosses = (currentLaneStat.losses ?? 0) + (didWin ? 0 : 1);
         const laneTotal = laneWins + laneLosses;
         const laneWr = laneTotal > 0 ? Math.round((laneWins / laneTotal) * 100) : currentLaneStat.wr;
 
         const newLanes = {
-          ...(p.lanes ?? {}),
+          ...currentLanes,
           [lane]: { ...currentLaneStat, wins: laneWins, losses: laneLosses, wr: laneWr },
         };
 
-        await supabase.from("players").update({
+        const { data: updated, error: updateErr } = await supabase.from("players").update({
           wins: newWins, losses: newLosses, recent_results: newResults, wr: newWr, lanes: newLanes,
-        }).eq("id", p.id);
+        }).eq("id", p.id).select();
+
+        if (updateErr) {
+          console.error("선수 갱신 실패", p.id, updateErr);
+        } else {
+          console.log("선수 갱신 완료", p.id, lane, "->", updated);
+        }
       }
     };
 
     await applyResult(winnerLineup, true);
     await applyResult(loserLineup, false);
-  }, [players]);
+    await fetchAll();
+  }, []);
 
   return (
     <Context.Provider value={{ players, teams, loading, addPlayer, updatePlayer, deletePlayer, updateTeam, assignPlayerToTeam, removePlayerFromTeam, resetAuction, recordMatchByLineups }}>
