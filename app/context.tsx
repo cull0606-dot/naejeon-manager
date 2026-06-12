@@ -1,7 +1,9 @@
 "use client";
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from "react";
 import { supabase } from "@/lib/supabase";
-import { Player, Team, LANES } from "@/lib/data";
+import { Player, Team, Lane, LANES } from "@/lib/data";
+
+type Lineup = Record<Lane, number | null>;
 
 interface Ctx {
   players: Player[];
@@ -14,8 +16,7 @@ interface Ctx {
   assignPlayerToTeam: (playerId: number, teamId: number, price: number) => Promise<void>;
   removePlayerFromTeam: (playerId: number) => Promise<void>;
   resetAuction: () => Promise<void>;
-  recordMatch: (winnerTeamId: number, loserTeamId: number) => Promise<void>;
-  recordMatchByPlayers: (winnerIds: number[], loserIds: number[]) => Promise<void>;
+  recordMatchByLineups: (winnerLineup: Lineup, loserLineup: Lineup) => Promise<void>;
 }
 
 const Context = createContext<Ctx | null>(null);
@@ -89,48 +90,45 @@ export function PlayersProvider({ children }: { children: ReactNode }) {
     }
   }, [teams]);
 
-  const recordMatch = useCallback(async (winnerTeamId: number, loserTeamId: number) => {
-    const winnerPlayers = players.filter(p => p.teamId === winnerTeamId);
-    const loserPlayers = players.filter(p => p.teamId === loserTeamId);
-    for (const p of winnerPlayers) {
-      const newWins = (p.wins ?? 0) + 1;
-      const newResults = ["W", ...(p.recent_results ?? [])].slice(0, 10);
-      const total = newWins + (p.losses ?? 0);
-      const newWr = total > 0 ? Math.round((newWins / total) * 100) : p.wr;
-      await supabase.from("players").update({ wins: newWins, recent_results: newResults, wr: newWr }).eq("id", p.id);
-    }
-    for (const p of loserPlayers) {
-      const newLosses = (p.losses ?? 0) + 1;
-      const newResults = ["L", ...(p.recent_results ?? [])].slice(0, 10);
-      const total = (p.wins ?? 0) + newLosses;
-      const newWr = total > 0 ? Math.round(((p.wins ?? 0) / total) * 100) : p.wr;
-      await supabase.from("players").update({ losses: newLosses, recent_results: newResults, wr: newWr }).eq("id", p.id);
-    }
-  }, [players]);
+  const recordMatchByLineups = useCallback(async (winnerLineup: Lineup, loserLineup: Lineup) => {
+    const applyResult = async (lineup: Lineup, didWin: boolean) => {
+      for (const lane of LANES) {
+        const id = lineup[lane];
+        if (!id) continue;
+        const p = players.find(x => x.id === id);
+        if (!p) continue;
 
-  const recordMatchByPlayers = useCallback(async (winnerIds: number[], loserIds: number[]) => {
-    for (const id of winnerIds) {
-      const p = players.find(x => x.id === id);
-      if (!p) continue;
-      const newWins = (p.wins ?? 0) + 1;
-      const newResults = ["W", ...(p.recent_results ?? [])].slice(0, 10);
-      const total = newWins + (p.losses ?? 0);
-      const newWr = total > 0 ? Math.round((newWins / total) * 100) : p.wr;
-      await supabase.from("players").update({ wins: newWins, recent_results: newResults, wr: newWr }).eq("id", p.id);
-    }
-    for (const id of loserIds) {
-      const p = players.find(x => x.id === id);
-      if (!p) continue;
-      const newLosses = (p.losses ?? 0) + 1;
-      const newResults = ["L", ...(p.recent_results ?? [])].slice(0, 10);
-      const total = (p.wins ?? 0) + newLosses;
-      const newWr = total > 0 ? Math.round(((p.wins ?? 0) / total) * 100) : p.wr;
-      await supabase.from("players").update({ losses: newLosses, recent_results: newResults, wr: newWr }).eq("id", p.id);
-    }
+        // 전체 전적
+        const newWins = (p.wins ?? 0) + (didWin ? 1 : 0);
+        const newLosses = (p.losses ?? 0) + (didWin ? 0 : 1);
+        const newResults = [didWin ? "W" : "L", ...(p.recent_results ?? [])].slice(0, 10);
+        const total = newWins + newLosses;
+        const newWr = total > 0 ? Math.round((newWins / total) * 100) : p.wr;
+
+        // 라인별 전적 (실제 출전한 라인 기준)
+        const currentLaneStat = p.lanes?.[lane] ?? { tier: "E4", wr: 50 };
+        const laneWins = (currentLaneStat.wins ?? 0) + (didWin ? 1 : 0);
+        const laneLosses = (currentLaneStat.losses ?? 0) + (didWin ? 0 : 1);
+        const laneTotal = laneWins + laneLosses;
+        const laneWr = laneTotal > 0 ? Math.round((laneWins / laneTotal) * 100) : currentLaneStat.wr;
+
+        const newLanes = {
+          ...(p.lanes ?? {}),
+          [lane]: { ...currentLaneStat, wins: laneWins, losses: laneLosses, wr: laneWr },
+        };
+
+        await supabase.from("players").update({
+          wins: newWins, losses: newLosses, recent_results: newResults, wr: newWr, lanes: newLanes,
+        }).eq("id", p.id);
+      }
+    };
+
+    await applyResult(winnerLineup, true);
+    await applyResult(loserLineup, false);
   }, [players]);
 
   return (
-    <Context.Provider value={{ players, teams, loading, addPlayer, updatePlayer, deletePlayer, updateTeam, assignPlayerToTeam, removePlayerFromTeam, resetAuction, recordMatch, recordMatchByPlayers }}>
+    <Context.Provider value={{ players, teams, loading, addPlayer, updatePlayer, deletePlayer, updateTeam, assignPlayerToTeam, removePlayerFromTeam, resetAuction, recordMatchByLineups }}>
       {children}
     </Context.Provider>
   );

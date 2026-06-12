@@ -31,7 +31,7 @@ interface MatchStateDB {
 }
 
 export default function MatchPage() {
-  const { players, recordMatchByPlayers, loading } = useStore();
+  const { players, recordMatchByLineups, loading } = useStore();
   const [state, setState] = useState<MatchStateDB | null>(null);
   const [recording, setRecording] = useState(false);
   const [history, setHistory] = useState<{ winner: string; loser: string; time: string }[]>([]);
@@ -110,9 +110,9 @@ export default function MatchPage() {
     if (!confirm(`${winnerName} 승리로 기록할까요?`)) return;
     setRecording(true);
 
-    const winnerIds = getLineupPlayers(winnerTeam === 1 ? t1lineup : t2lineup).map(p => p.id);
-    const loserIds = getLineupPlayers(winnerTeam === 1 ? t2lineup : t1lineup).map(p => p.id);
-    await recordMatchByPlayers(winnerIds, loserIds);
+    const winnerLineup = winnerTeam === 1 ? t1lineup : t2lineup;
+    const loserLineup = winnerTeam === 1 ? t2lineup : t1lineup;
+    await recordMatchByLineups(winnerLineup, loserLineup);
 
     setHistory(prev => [{
       winner: winnerName, loser: loserName,

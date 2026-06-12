@@ -1,6 +1,6 @@
 "use client";
 import { useStore } from "../context";
-import { LANES } from "@/lib/data";
+import { LANES, TIER_ORDER } from "@/lib/data";
 
 export default function StatsPage() {
   const { players, teams, loading } = useStore();
@@ -16,8 +16,7 @@ export default function StatsPage() {
   });
 
   const topWr = [...players].sort((a, b) => b.wr - a.wr).slice(0, 5);
-  const TIERS = ["C1","C2","C3","D1","D2","D3","D4","E1","E2","E3","E4","P1","P2","P3","P4","G1","G2","G3","G4"];
-  const topTier = [...players].sort((a, b) => TIERS.indexOf(a.tier) - TIERS.indexOf(b.tier)).slice(0, 5);
+  const topTier = [...players].sort((a, b) => TIER_ORDER.indexOf(a.tier) - TIER_ORDER.indexOf(b.tier)).slice(0, 5);
   const teamStrength = teams.map(t => {
     const tp = players.filter(p => p.teamId === t.id);
     const avgWr = tp.length ? Math.round(tp.reduce((s, p) => s + p.wr, 0) / tp.length) : 0;

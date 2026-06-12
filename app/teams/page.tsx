@@ -4,12 +4,8 @@ import { useStore } from "../context";
 import { LANES } from "@/lib/data";
 
 export default function TeamsPage() {
-  const { players, teams, removePlayerFromTeam, recordMatch, loading } = useStore();
+  const { players, teams, removePlayerFromTeam, loading } = useStore();
   const [selectedTeam, setSelectedTeam] = useState<number | null>(null);
-  const [matchModal, setMatchModal] = useState(false);
-  const [matchTeamA, setMatchTeamA] = useState<number | null>(null);
-  const [matchTeamB, setMatchTeamB] = useState<number | null>(null);
-  const [recording, setRecording] = useState(false);
 
   const teamId = selectedTeam ?? teams[0]?.id;
   const team = teams.find(t => t.id === teamId);
@@ -19,89 +15,14 @@ export default function TeamsPage() {
 
   if (loading) return <div style={{ color: "var(--text2)", padding: 40, textAlign: "center" }}>불러오는 중...</div>;
 
-  async function handleRecordMatch(winnerId: number, loserId: number) {
-    setRecording(true);
-    await recordMatch(winnerId, loserId);
-    setRecording(false);
-    setMatchModal(false);
-    setMatchTeamA(null);
-    setMatchTeamB(null);
-  }
 
   return (
     <div>
-      {/* 경기 결과 등록 모달 */}
-      {matchModal && (
-        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.7)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:999 }}>
-          <div className="card" style={{ padding:24, width:420, maxHeight:"85vh", overflowY:"auto" }}>
-            <h3 style={{ fontSize:16, fontWeight:700, marginBottom:4 }}>🏆 경기 결과 등록</h3>
-            <p style={{ fontSize:13, color:"var(--text2)", marginBottom:20 }}>대결한 두 팀을 선택하고 승리 팀을 클릭하세요. 5명 전원의 승률이 즉시 갱신됩니다.</p>
-
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:16 }}>
-              <div>
-                <label style={{ fontSize:12, color:"var(--text2)", display:"block", marginBottom:4 }}>팀 A</label>
-                <select value={matchTeamA ?? ""} onChange={e => setMatchTeamA(Number(e.target.value))}>
-                  <option value="">선택...</option>
-                  {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                </select>
-              </div>
-              <div>
-                <label style={{ fontSize:12, color:"var(--text2)", display:"block", marginBottom:4 }}>팀 B</label>
-                <select value={matchTeamB ?? ""} onChange={e => setMatchTeamB(Number(e.target.value))}>
-                  <option value="">선택...</option>
-                  {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                </select>
-              </div>
-            </div>
-
-            {matchTeamA && matchTeamB && matchTeamA !== matchTeamB ? (
-              <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-                {[matchTeamA, matchTeamB].map(tid => {
-                  const t = teams.find(x => x.id === tid)!;
-                  const tp = players.filter(p => p.teamId === tid);
-                  return (
-                    <div key={tid} className="card" style={{ padding:14 }}>
-                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
-                        <span style={{ fontSize:15, fontWeight:700, color:t.color }}>{t.name}</span>
-                        <span style={{ fontSize:12, color:"var(--text2)" }}>{tp.length}명</span>
-                      </div>
-                      <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:12 }}>
-                        {tp.map(p => (
-                          <span key={p.id} style={{ fontSize:12, padding:"3px 8px", borderRadius:6, background:`${t.color}22`, color:t.color }}>{p.name} ({p.line})</span>
-                        ))}
-                        {tp.length === 0 && <span style={{ fontSize:12, color:"var(--text2)" }}>선수 없음</span>}
-                      </div>
-                      <button
-                        className="btn btn-primary"
-                        style={{ width:"100%", background:"#22C55E", borderColor:"#22C55E" }}
-                        disabled={recording || tp.length === 0}
-                        onClick={() => handleRecordMatch(tid, tid === matchTeamA ? matchTeamB! : matchTeamA!)}
-                      >
-                        ✅ {t.name} 승리
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div style={{ textAlign:"center", padding:"20px 0", color:"var(--text2)", fontSize:13 }}>
-                대결한 두 팀을 선택해주세요
-              </div>
-            )}
-
-            <div style={{ display:"flex", justifyContent:"flex-end", marginTop:20 }}>
-              <button className="btn" onClick={() => { setMatchModal(false); setMatchTeamA(null); setMatchTeamB(null); }}>닫기</button>
-            </div>
-          </div>
-        </div>
-      )}
-
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom: 20 }}>
         <div>
           <h1 style={{ fontSize: 22, fontWeight: 700 }}>팀 관리</h1>
           <p style={{ fontSize: 13, color: "var(--text2)", marginTop: 2 }}>팀별 선수 구성 및 밸런스 확인 · <span style={{ color: "#22C55E" }}>● 실시간 연동</span></p>
         </div>
-        <button className="btn btn-primary" onClick={() => setMatchModal(true)}>🏆 경기 결과 등록</button>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(160px,1fr))", gap: 10, marginBottom: 20 }}>

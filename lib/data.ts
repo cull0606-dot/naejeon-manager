@@ -1,6 +1,6 @@
 export type Grade = "ACE" | "VALUE" | "NORMAL";
 export type Lane = "TOP" | "JUG" | "MID" | "ADC" | "SUP";
-export interface LaneStat { tier: string; wr: number; lp?: number; }
+export interface LaneStat { tier: string; wr: number; lp?: number; wins?: number; losses?: number; }
 export interface Champion { name: string; games: number; wr: number; }
 export interface Player {
   id: number;
