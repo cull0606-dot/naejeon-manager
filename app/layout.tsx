@@ -9,6 +9,7 @@ const NAV = [
   { href: "/players", label: "선수 관리", icon: "👤" },
   { href: "/teams", label: "팀 관리", icon: "🛡️" },
   { href: "/auction", label: "경매 시스템", icon: "🔨" },
+  { href: "/match", label: "게임 현황", icon: "🎮" },
   { href: "/stats", label: "통계", icon: "📊" },
 ];
 

@@ -15,6 +15,7 @@ interface Ctx {
   removePlayerFromTeam: (playerId: number) => Promise<void>;
   resetAuction: () => Promise<void>;
   recordMatch: (winnerTeamId: number, loserTeamId: number) => Promise<void>;
+  recordMatchByPlayers: (winnerIds: number[], loserIds: number[]) => Promise<void>;
 }
 
 const Context = createContext<Ctx | null>(null);
@@ -105,8 +106,29 @@ export function PlayersProvider({ children }: { children: ReactNode }) {
     }
   }, [players]);
 
+  const recordMatchByPlayers = useCallback(async (winnerIds: number[], loserIds: number[]) => {
+    for (const id of winnerIds) {
+      const p = players.find(x => x.id === id);
+      if (!p) continue;
+      const newWins = (p.wins ?? 0) + 1;
+      const newResults = ["W", ...(p.recent_results ?? [])].slice(0, 10);
+      const total = newWins + (p.losses ?? 0);
+      const newWr = total > 0 ? Math.round((newWins / total) * 100) : p.wr;
+      await supabase.from("players").update({ wins: newWins, recent_results: newResults, wr: newWr }).eq("id", p.id);
+    }
+    for (const id of loserIds) {
+      const p = players.find(x => x.id === id);
+      if (!p) continue;
+      const newLosses = (p.losses ?? 0) + 1;
+      const newResults = ["L", ...(p.recent_results ?? [])].slice(0, 10);
+      const total = (p.wins ?? 0) + newLosses;
+      const newWr = total > 0 ? Math.round(((p.wins ?? 0) / total) * 100) : p.wr;
+      await supabase.from("players").update({ losses: newLosses, recent_results: newResults, wr: newWr }).eq("id", p.id);
+    }
+  }, [players]);
+
   return (
-    <Context.Provider value={{ players, teams, loading, addPlayer, updatePlayer, deletePlayer, updateTeam, assignPlayerToTeam, removePlayerFromTeam, resetAuction, recordMatch }}>
+    <Context.Provider value={{ players, teams, loading, addPlayer, updatePlayer, deletePlayer, updateTeam, assignPlayerToTeam, removePlayerFromTeam, resetAuction, recordMatch, recordMatchByPlayers }}>
       {children}
     </Context.Provider>
   );
