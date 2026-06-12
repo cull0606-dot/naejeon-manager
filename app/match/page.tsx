@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useStore } from "../context";
 import { supabase } from "@/lib/supabase";
 import { Player } from "@/lib/data";
@@ -8,9 +8,6 @@ const LANES = ["TOP", "JUG", "MID", "ADC", "SUP"] as const;
 type Lane = typeof LANES[number];
 type Lineup = Record<Lane, number | null>;
 const EMPTY_LINEUP: Lineup = { TOP: null, JUG: null, MID: null, ADC: null, SUP: null };
-
-const AVATAR_COLORS = ["#7C3AED","#0369A1","#DC2626","#D97706","#059669","#DB2777","#0891B2","#65A30D"];
-function avatarColor(id: number) { return AVATAR_COLORS[id % AVATAR_COLORS.length]; }
 
 interface MatchStateDB {
   id: number;
@@ -76,15 +73,29 @@ export default function MatchPage() {
     return LANES.map(l => players.find(p => p.id === lineup[l])).filter(Boolean) as Player[];
   }
 
+  // 전체 경기에서 사용된 선수 체크 (편집 중인 칸만 제외)
   function usedIds(match: "match1" | "match2" | "final", excludeTeam: 1 | 2, excludeLane: Lane): Set<number> {
     if (!state) return new Set();
     const ids = new Set<number>();
-    const t1 = state[`${match}_team1` as keyof MatchStateDB] as Lineup;
-    const t2 = state[`${match}_team2` as keyof MatchStateDB] as Lineup;
-    LANES.forEach(l => {
-      if (!(excludeTeam === 1 && excludeLane === l) && t1[l]) ids.add(t1[l]!);
-      if (!(excludeTeam === 2 && excludeLane === l) && t2[l]) ids.add(t2[l]!);
+
+    const allLineups: { key: keyof MatchStateDB; m: string; t: number }[] = [
+      { key: "match1_team1", m: "match1", t: 1 },
+      { key: "match1_team2", m: "match1", t: 2 },
+      { key: "match2_team1", m: "match2", t: 1 },
+      { key: "match2_team2", m: "match2", t: 2 },
+      { key: "final_team1", m: "final", t: 1 },
+      { key: "final_team2", m: "final", t: 2 },
+    ];
+
+    allLineups.forEach(({ key, m, t }) => {
+      const lineup = state[key] as Lineup;
+      LANES.forEach(l => {
+        // 지금 편집 중인 칸은 제외
+        if (m === match && t === excludeTeam && l === excludeLane) return;
+        if (lineup[l]) ids.add(lineup[l]!);
+      });
     });
+
     return ids;
   }
 
@@ -103,22 +114,21 @@ export default function MatchPage() {
     const loserIds = getLineupPlayers(winnerTeam === 1 ? t2lineup : t1lineup).map(p => p.id);
     await recordMatchByPlayers(winnerIds, loserIds);
 
-    setHistory(prev => [{ winner: winnerName, loser: loserName, time: new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) }, ...prev.slice(0, 9)]);
+    setHistory(prev => [{
+      winner: winnerName, loser: loserName,
+      time: new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+    }, ...prev.slice(0, 9)]);
 
-    // 4팀 모드에서 4강 결과 처리 → 결승 자동 생성
     if (state.mode === "4team" && match !== "final") {
       const winnerKey = `${match}_winner`;
-      await supabase.from("match_state").update({ [winnerKey]: winnerName }).eq("id", 1);
-
       const otherMatch = match === "match1" ? "match2" : "match1";
       const otherWinner = state[`${otherMatch}_winner` as keyof MatchStateDB] as string | null;
 
       if (otherWinner) {
-        // 둘 다 결과 나옴 → 결승 자동 생성
         const finalT1Lineup = winnerTeam === 1 ? t1lineup : t2lineup;
         const finalT2Lineup = match === "match1"
-          ? (state.match2_winner ? (state.match2_winner === state.match2_team1_name ? state.match2_team1 : state.match2_team2) : EMPTY_LINEUP)
-          : (state.match1_winner ? (state.match1_winner === state.match1_team1_name ? state.match1_team1 : state.match1_team2) : EMPTY_LINEUP);
+          ? (state.match2_winner === state.match2_team1_name ? state.match2_team1 : state.match2_team2)
+          : (state.match1_winner === state.match1_team1_name ? state.match1_team1 : state.match1_team2);
 
         await supabase.from("match_state").update({
           [winnerKey]: winnerName,
@@ -129,6 +139,8 @@ export default function MatchPage() {
           final_team2_name: otherWinner,
           final_winner: null,
         }).eq("id", 1);
+      } else {
+        await supabase.from("match_state").update({ [winnerKey]: winnerName }).eq("id", 1);
       }
     } else if (match === "final") {
       await supabase.from("match_state").update({ final_winner: winnerName }).eq("id", 1);
@@ -167,67 +179,41 @@ export default function MatchPage() {
             라인업을 구성하고 경기 결과를 등록하세요 · <span style={{ color: "#22C55E" }}>● 실시간 연동</span>
           </p>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={resetMatch} className="btn btn-danger">현황 초기화</button>
-        </div>
+        <button onClick={resetMatch} className="btn btn-danger">현황 초기화</button>
       </div>
 
       {/* 모드 선택 */}
       <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-        <button
-          onClick={() => setMode("2team")}
-          style={{
+        {(["2team", "4team"] as const).map(m => (
+          <button key={m} onClick={() => setMode(m)} style={{
             padding: "8px 20px", borderRadius: 8, border: "1px solid", cursor: "pointer", fontWeight: 600, fontSize: 14,
-            borderColor: !is4team ? "var(--purple)" : "var(--border2)",
-            background: !is4team ? "rgba(124,58,237,0.15)" : "transparent",
-            color: !is4team ? "var(--purple-light)" : "var(--text2)",
+            borderColor: state.mode === m ? "var(--purple)" : "var(--border2)",
+            background: state.mode === m ? "rgba(124,58,237,0.15)" : "transparent",
+            color: state.mode === m ? "var(--purple-light)" : "var(--text2)",
           }}>
-          2팀 모드
-        </button>
-        <button
-          onClick={() => setMode("4team")}
-          style={{
-            padding: "8px 20px", borderRadius: 8, border: "1px solid", cursor: "pointer", fontWeight: 600, fontSize: 14,
-            borderColor: is4team ? "var(--purple)" : "var(--border2)",
-            background: is4team ? "rgba(124,58,237,0.15)" : "transparent",
-            color: is4team ? "var(--purple-light)" : "var(--text2)",
-          }}>
-          4팀 토너먼트
-        </button>
+            {m === "2team" ? "2팀 모드" : "4팀 토너먼트"}
+          </button>
+        ))}
       </div>
 
       {!is4team ? (
         // 2팀 모드
         <div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
-            <TeamPanel
-              match="match1" teamNum={1}
-              name={state.match1_team1_name}
-              onNameChange={n => updateTeamName("match1", 1, n)}
-              lineup={state.match1_team1}
-              onSelect={(lane, id) => updateLineup("match1", 1, lane, id)}
-              players={players}
-              usedIdsFor={lane => usedIds("match1", 1, lane)}
-              color="#7C3AED"
-            />
-            <TeamPanel
-              match="match1" teamNum={2}
-              name={state.match1_team2_name}
-              onNameChange={n => updateTeamName("match1", 2, n)}
-              lineup={state.match1_team2}
-              onSelect={(lane, id) => updateLineup("match1", 2, lane, id)}
-              players={players}
-              usedIdsFor={lane => usedIds("match1", 2, lane)}
-              color="#0369A1"
-            />
+            <TeamPanel match="match1" teamNum={1} name={state.match1_team1_name}
+              onNameChange={n => updateTeamName("match1", 1, n)} lineup={state.match1_team1}
+              onSelect={(lane, id) => updateLineup("match1", 1, lane, id)} players={players}
+              usedIdsFor={lane => usedIds("match1", 1, lane)} color="#7C3AED" />
+            <TeamPanel match="match1" teamNum={2} name={state.match1_team2_name}
+              onNameChange={n => updateTeamName("match1", 2, n)} lineup={state.match1_team2}
+              onSelect={(lane, id) => updateLineup("match1", 2, lane, id)} players={players}
+              usedIdsFor={lane => usedIds("match1", 2, lane)} color="#0369A1" />
           </div>
           <WinButtons
             t1name={state.match1_team1_name} t2name={state.match1_team2_name}
             t1full={getLineupPlayers(state.match1_team1).length === 5}
             t2full={getLineupPlayers(state.match1_team2).length === 5}
-            recording={recording}
-            onWin={w => handleWin("match1", w)}
-            winner={state.match1_winner}
+            recording={recording} onWin={w => handleWin("match1", w)} winner={state.match1_winner}
           />
         </div>
       ) : (
@@ -241,34 +227,20 @@ export default function MatchPage() {
                 <div>
                   <div style={{ fontSize: 12, color: "var(--text2)", marginBottom: 8, fontWeight: 600 }}>4강 1경기</div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
-                    <TeamPanel
-                      match="match1" teamNum={1}
-                      name={state.match1_team1_name}
-                      onNameChange={n => updateTeamName("match1", 1, n)}
-                      lineup={state.match1_team1}
-                      onSelect={(lane, id) => updateLineup("match1", 1, lane, id)}
-                      players={players}
-                      usedIdsFor={lane => usedIds("match1", 1, lane)}
-                      color="#7C3AED"
-                    />
-                    <TeamPanel
-                      match="match1" teamNum={2}
-                      name={state.match1_team2_name}
-                      onNameChange={n => updateTeamName("match1", 2, n)}
-                      lineup={state.match1_team2}
-                      onSelect={(lane, id) => updateLineup("match1", 2, lane, id)}
-                      players={players}
-                      usedIdsFor={lane => usedIds("match1", 2, lane)}
-                      color="#0369A1"
-                    />
+                    <TeamPanel match="match1" teamNum={1} name={state.match1_team1_name}
+                      onNameChange={n => updateTeamName("match1", 1, n)} lineup={state.match1_team1}
+                      onSelect={(lane, id) => updateLineup("match1", 1, lane, id)} players={players}
+                      usedIdsFor={lane => usedIds("match1", 1, lane)} color="#7C3AED" />
+                    <TeamPanel match="match1" teamNum={2} name={state.match1_team2_name}
+                      onNameChange={n => updateTeamName("match1", 2, n)} lineup={state.match1_team2}
+                      onSelect={(lane, id) => updateLineup("match1", 2, lane, id)} players={players}
+                      usedIdsFor={lane => usedIds("match1", 2, lane)} color="#0369A1" />
                   </div>
                   <WinButtons
                     t1name={state.match1_team1_name} t2name={state.match1_team2_name}
                     t1full={getLineupPlayers(state.match1_team1).length === 5}
                     t2full={getLineupPlayers(state.match1_team2).length === 5}
-                    recording={recording}
-                    onWin={w => handleWin("match1", w)}
-                    winner={state.match1_winner}
+                    recording={recording} onWin={w => handleWin("match1", w)} winner={state.match1_winner}
                   />
                 </div>
 
@@ -276,34 +248,20 @@ export default function MatchPage() {
                 <div>
                   <div style={{ fontSize: 12, color: "var(--text2)", marginBottom: 8, fontWeight: 600 }}>4강 2경기</div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
-                    <TeamPanel
-                      match="match2" teamNum={1}
-                      name={state.match2_team1_name}
-                      onNameChange={n => updateTeamName("match2", 1, n)}
-                      lineup={state.match2_team1}
-                      onSelect={(lane, id) => updateLineup("match2", 1, lane, id)}
-                      players={players}
-                      usedIdsFor={lane => usedIds("match2", 1, lane)}
-                      color="#DC2626"
-                    />
-                    <TeamPanel
-                      match="match2" teamNum={2}
-                      name={state.match2_team2_name}
-                      onNameChange={n => updateTeamName("match2", 2, n)}
-                      lineup={state.match2_team2}
-                      onSelect={(lane, id) => updateLineup("match2", 2, lane, id)}
-                      players={players}
-                      usedIdsFor={lane => usedIds("match2", 2, lane)}
-                      color="#D97706"
-                    />
+                    <TeamPanel match="match2" teamNum={1} name={state.match2_team1_name}
+                      onNameChange={n => updateTeamName("match2", 1, n)} lineup={state.match2_team1}
+                      onSelect={(lane, id) => updateLineup("match2", 1, lane, id)} players={players}
+                      usedIdsFor={lane => usedIds("match2", 1, lane)} color="#DC2626" />
+                    <TeamPanel match="match2" teamNum={2} name={state.match2_team2_name}
+                      onNameChange={n => updateTeamName("match2", 2, n)} lineup={state.match2_team2}
+                      onSelect={(lane, id) => updateLineup("match2", 2, lane, id)} players={players}
+                      usedIdsFor={lane => usedIds("match2", 2, lane)} color="#D97706" />
                   </div>
                   <WinButtons
                     t1name={state.match2_team1_name} t2name={state.match2_team2_name}
                     t1full={getLineupPlayers(state.match2_team1).length === 5}
                     t2full={getLineupPlayers(state.match2_team2).length === 5}
-                    recording={recording}
-                    onWin={w => handleWin("match2", w)}
-                    winner={state.match2_winner}
+                    recording={recording} onWin={w => handleWin("match2", w)} winner={state.match2_winner}
                   />
                 </div>
               </div>
@@ -317,11 +275,8 @@ export default function MatchPage() {
                     {" vs "}
                     <span style={{ color: "#DC2626" }}>{state.match2_winner}</span>
                   </div>
-                  <button
-                    className="btn btn-primary"
-                    style={{ marginTop: 12 }}
-                    onClick={() => supabase.from("match_state").update({ stage: "final" }).eq("id", 1)}
-                  >
+                  <button className="btn btn-primary" style={{ marginTop: 12 }}
+                    onClick={() => supabase.from("match_state").update({ stage: "final" }).eq("id", 1)}>
                     결승 시작하기 →
                   </button>
                 </div>
@@ -341,43 +296,25 @@ export default function MatchPage() {
               ) : (
                 <>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
-                    <TeamPanel
-                      match="final" teamNum={1}
-                      name={state.final_team1_name ?? "결승 1팀"}
-                      onNameChange={n => updateTeamName("final", 1, n)}
-                      lineup={state.final_team1}
-                      onSelect={(lane, id) => updateLineup("final", 1, lane, id)}
-                      players={players}
-                      usedIdsFor={lane => usedIds("final", 1, lane)}
-                      color="#7C3AED"
-                    />
-                    <TeamPanel
-                      match="final" teamNum={2}
-                      name={state.final_team2_name ?? "결승 2팀"}
-                      onNameChange={n => updateTeamName("final", 2, n)}
-                      lineup={state.final_team2}
-                      onSelect={(lane, id) => updateLineup("final", 2, lane, id)}
-                      players={players}
-                      usedIdsFor={lane => usedIds("final", 2, lane)}
-                      color="#DC2626"
-                    />
+                    <TeamPanel match="final" teamNum={1} name={state.final_team1_name ?? "결승 1팀"}
+                      onNameChange={n => updateTeamName("final", 1, n)} lineup={state.final_team1}
+                      onSelect={(lane, id) => updateLineup("final", 1, lane, id)} players={players}
+                      usedIdsFor={lane => usedIds("final", 1, lane)} color="#7C3AED" />
+                    <TeamPanel match="final" teamNum={2} name={state.final_team2_name ?? "결승 2팀"}
+                      onNameChange={n => updateTeamName("final", 2, n)} lineup={state.final_team2}
+                      onSelect={(lane, id) => updateLineup("final", 2, lane, id)} players={players}
+                      usedIdsFor={lane => usedIds("final", 2, lane)} color="#DC2626" />
                   </div>
                   <WinButtons
-                    t1name={state.final_team1_name ?? "결승 1팀"}
-                    t2name={state.final_team2_name ?? "결승 2팀"}
+                    t1name={state.final_team1_name ?? "결승 1팀"} t2name={state.final_team2_name ?? "결승 2팀"}
                     t1full={getLineupPlayers(state.final_team1).length === 5}
                     t2full={getLineupPlayers(state.final_team2).length === 5}
-                    recording={recording}
-                    onWin={w => handleWin("final", w)}
-                    winner={state.final_winner}
+                    recording={recording} onWin={w => handleWin("final", w)} winner={state.final_winner}
                   />
                 </>
               )}
-              <button
-                className="btn"
-                style={{ marginTop: 12 }}
-                onClick={() => supabase.from("match_state").update({ stage: "semi" }).eq("id", 1)}
-              >
+              <button className="btn" style={{ marginTop: 12 }}
+                onClick={() => supabase.from("match_state").update({ stage: "semi" }).eq("id", 1)}>
                 ← 4강으로 돌아가기
               </button>
             </>
@@ -408,7 +345,8 @@ function TeamPanel({ match, teamNum, name, onNameChange, lineup, onSelect, playe
   lineup: Lineup; onSelect: (lane: Lane, id: number | null) => void;
   players: Player[]; usedIdsFor: (lane: Lane) => Set<number>; color: string;
 }) {
-  const avgWr = LANES.map(l => players.find(p => p.id === lineup[l])).filter(Boolean).reduce((s, p, _, a) => s + (p?.wr ?? 0) / a.length, 0);
+  const filledPlayers = LANES.map(l => players.find(p => p.id === lineup[l])).filter(Boolean) as Player[];
+  const avgWr = filledPlayers.length ? Math.round(filledPlayers.reduce((s, p) => s + p.wr, 0) / filledPlayers.length) : 0;
   const full = LANES.every(l => lineup[l] !== null);
 
   return (
@@ -417,7 +355,7 @@ function TeamPanel({ match, teamNum, name, onNameChange, lineup, onSelect, playe
         <input value={name} onChange={e => onNameChange(e.target.value)}
           style={{ fontSize: 16, fontWeight: 700, color, border: "none", background: "transparent", padding: 0, width: 100 }} />
         <div style={{ fontSize: 12, color: "var(--text2)" }}>
-          평균 <b style={{ color: avgWr >= 60 ? "#22C55E" : "var(--text)" }}>{Math.round(avgWr)}%</b>
+          평균 <b style={{ color: avgWr >= 60 ? "#22C55E" : "var(--text)" }}>{avgWr}%</b>
         </div>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
