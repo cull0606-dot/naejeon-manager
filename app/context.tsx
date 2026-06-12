@@ -14,6 +14,7 @@ interface Ctx {
   assignPlayerToTeam: (playerId: number, teamId: number, price: number) => Promise<void>;
   removePlayerFromTeam: (playerId: number) => Promise<void>;
   resetAuction: () => Promise<void>;
+  recordMatch: (winnerTeamId: number, loserTeamId: number) => Promise<void>;
 }
 
 const Context = createContext<Ctx | null>(null);
@@ -47,19 +48,7 @@ export function PlayersProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const updatePlayer = useCallback(async (id: number, p: Partial<Player>) => {
-    const db: Record<string, unknown> = {};
-    if (p.name !== undefined) db.name = p.name;
-    if (p.riot !== undefined) db.riot = p.riot;
-    if (p.line !== undefined) db.line = p.line;
-    if (p.sub !== undefined) db.sub = p.sub;
-    if (p.tier !== undefined) db.tier = p.tier;
-    if (p.wr !== undefined) db.wr = p.wr;
-    if (p.grade !== undefined) db.grade = p.grade;
-    if (p.active !== undefined) db.active = p.active;
-    if (p.lanes !== undefined) db.lanes = p.lanes;
-    if (p.teamId !== undefined) db.team_id = p.teamId;
-    if (p.auctionPrice !== undefined) db.auction_price = p.auctionPrice;
-    await supabase.from("players").update(db).eq("id", id);
+    await supabase.from("players").update(playerToDb(p as Player, true)).eq("id", id);
   }, []);
 
   const deletePlayer = useCallback(async (id: number) => {
@@ -97,8 +86,27 @@ export function PlayersProvider({ children }: { children: ReactNode }) {
     }
   }, [teams]);
 
+  const recordMatch = useCallback(async (winnerTeamId: number, loserTeamId: number) => {
+    const winnerPlayers = players.filter(p => p.teamId === winnerTeamId);
+    const loserPlayers = players.filter(p => p.teamId === loserTeamId);
+    for (const p of winnerPlayers) {
+      const newWins = (p.wins ?? 0) + 1;
+      const newResults = ["W", ...(p.recent_results ?? [])].slice(0, 10);
+      const total = newWins + (p.losses ?? 0);
+      const newWr = total > 0 ? Math.round((newWins / total) * 100) : p.wr;
+      await supabase.from("players").update({ wins: newWins, recent_results: newResults, wr: newWr }).eq("id", p.id);
+    }
+    for (const p of loserPlayers) {
+      const newLosses = (p.losses ?? 0) + 1;
+      const newResults = ["L", ...(p.recent_results ?? [])].slice(0, 10);
+      const total = (p.wins ?? 0) + newLosses;
+      const newWr = total > 0 ? Math.round(((p.wins ?? 0) / total) * 100) : p.wr;
+      await supabase.from("players").update({ losses: newLosses, recent_results: newResults, wr: newWr }).eq("id", p.id);
+    }
+  }, [players]);
+
   return (
-    <Context.Provider value={{ players, teams, loading, addPlayer, updatePlayer, deletePlayer, updateTeam, assignPlayerToTeam, removePlayerFromTeam, resetAuction }}>
+    <Context.Provider value={{ players, teams, loading, addPlayer, updatePlayer, deletePlayer, updateTeam, assignPlayerToTeam, removePlayerFromTeam, resetAuction, recordMatch }}>
       {children}
     </Context.Provider>
   );
@@ -110,7 +118,7 @@ export function useStore() {
   return ctx;
 }
 
-function dbToPlayer(d: Record<string, unknown>): Player {
+export function dbToPlayer(d: Record<string, unknown>): Player {
   return {
     id: d.id as number,
     name: d.name as string,
@@ -121,10 +129,48 @@ function dbToPlayer(d: Record<string, unknown>): Player {
     wr: (d.wr as number) ?? 50,
     grade: (d.grade as Player["grade"]) ?? "NORMAL",
     active: (d.active as boolean) ?? true,
-    lanes: (d.lanes as Player["lanes"]) ?? Object.fromEntries(LANES.map(l => [l, { tier: "E4", wr: 50 }])),
+    lanes: (d.lanes as Player["lanes"]) ?? Object.fromEntries(LANES.map(l => [l, { tier: "E4", wr: 50, lp: 0 }])),
     teamId: (d.team_id as number) ?? undefined,
     auctionPrice: (d.auction_price as number) ?? undefined,
+    intro: (d.intro as string) ?? "",
+    tags: (d.tags as string) ?? "",
+    position_status: (d.position_status as string) ?? "캐리형",
+    memo: (d.memo as string) ?? "",
+    champions: (d.champions as Player["champions"]) ?? [],
+    recent_results: (d.recent_results as string[]) ?? [],
+    wins: (d.wins as number) ?? 0,
+    losses: (d.losses as number) ?? 0,
+    team_wins: (d.team_wins as number) ?? 0,
+    team_losses: (d.team_losses as number) ?? 0,
+    lp: (d.lp as Record<Player["line"], number>) ?? { TOP:0, JUG:0, MID:0, ADC:0, SUP:0 },
   };
+}
+
+function playerToDb(p: Partial<Player>, partial = false): Record<string, unknown> {
+  const db: Record<string, unknown> = {};
+  if (!partial || p.name !== undefined) db.name = p.name;
+  if (!partial || p.riot !== undefined) db.riot = p.riot;
+  if (!partial || p.line !== undefined) db.line = p.line;
+  if (!partial || p.sub !== undefined) db.sub = p.sub;
+  if (!partial || p.tier !== undefined) db.tier = p.tier;
+  if (!partial || p.wr !== undefined) db.wr = p.wr;
+  if (!partial || p.grade !== undefined) db.grade = p.grade;
+  if (!partial || p.active !== undefined) db.active = p.active;
+  if (!partial || p.lanes !== undefined) db.lanes = p.lanes;
+  if (p.teamId !== undefined) db.team_id = p.teamId ?? null;
+  if (p.auctionPrice !== undefined) db.auction_price = p.auctionPrice ?? null;
+  if (p.intro !== undefined) db.intro = p.intro;
+  if (p.tags !== undefined) db.tags = p.tags;
+  if (p.position_status !== undefined) db.position_status = p.position_status;
+  if (p.memo !== undefined) db.memo = p.memo;
+  if (p.champions !== undefined) db.champions = p.champions;
+  if (p.recent_results !== undefined) db.recent_results = p.recent_results;
+  if (p.wins !== undefined) db.wins = p.wins;
+  if (p.losses !== undefined) db.losses = p.losses;
+  if (p.team_wins !== undefined) db.team_wins = p.team_wins;
+  if (p.team_losses !== undefined) db.team_losses = p.team_losses;
+  if (p.lp !== undefined) db.lp = p.lp;
+  return db;
 }
 
 function dbToTeam(d: Record<string, unknown>): Team {
@@ -135,13 +181,5 @@ function dbToTeam(d: Record<string, unknown>): Team {
     captainId: (d.captain_id as number) ?? 0,
     points: (d.points as number) ?? 1000,
     players: [],
-  };
-}
-
-function playerToDb(p: Player): Record<string, unknown> {
-  return {
-    name: p.name, riot: p.riot, line: p.line, sub: p.sub,
-    tier: p.tier, wr: p.wr, grade: p.grade, active: p.active,
-    lanes: p.lanes, team_id: p.teamId ?? null, auction_price: p.auctionPrice ?? null,
   };
 }
